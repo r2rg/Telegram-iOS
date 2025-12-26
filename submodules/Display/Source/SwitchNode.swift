@@ -1,6 +1,7 @@
 import Foundation
 import UIKit
 import AsyncDisplayKit
+import SwiftUI
 
 private final class SwitchNodeViewLayer: CALayer {
     override func setNeedsDisplay() {
@@ -22,26 +23,31 @@ open class SwitchNode: ASDisplayNode {
     
     public var frameColor = UIColor(rgb: 0xe0e0e0) {
         didSet {
-            if self.isNodeLoaded {
-                if oldValue != self.frameColor {
-                    (self.view as! UISwitch).tintColor = self.frameColor
-                }
+            guard isNodeLoaded, oldValue != frameColor else { return }
+            if let switchView = self.view as? UISwitch {
+                switchView.tintColor = frameColor
+            } else if #available(iOS 17.0, *), let wrapper = self.view as? LiquidSwitchWrapper {
+                wrapper.model.frameColor = Color(frameColor)
             }
         }
     }
+    
     public var handleColor = UIColor(rgb: 0xffffff) {
         didSet {
-            if self.isNodeLoaded {
-                //(self.view as! UISwitch).thumbTintColor = self.handleColor
+            guard isNodeLoaded, oldValue != handleColor else { return }
+            if #available(iOS 17.0, *), let wrapper = self.view as? LiquidSwitchWrapper {
+                wrapper.model.handleColor = Color(handleColor)
             }
         }
     }
+    
     public var contentColor = UIColor(rgb: 0x42d451) {
         didSet {
-            if self.isNodeLoaded {
-                if oldValue != self.contentColor {
-                    (self.view as! UISwitch).onTintColor = self.contentColor
-                }
+            guard isNodeLoaded, oldValue != contentColor else { return }
+            if let switchView = self.view as? UISwitch {
+                switchView.onTintColor = contentColor
+            } else if #available(iOS 17.0, *), let wrapper = self.view as? LiquidSwitchWrapper {
+                wrapper.model.contentColor = Color(contentColor)
             }
         }
     }
@@ -54,7 +60,11 @@ open class SwitchNode: ASDisplayNode {
             if (value != self._isOn) {
                 self._isOn = value
                 if self.isNodeLoaded {
-                    (self.view as! UISwitch).setOn(value, animated: false)
+                    if let switchView = self.view as? UISwitch {
+                        switchView.setOn(value, animated: false)
+                    } else if #available(iOS 17.0, *), let wrapper = self.view as? LiquidSwitchWrapper {
+                         wrapper.model.isOn = value
+                    }
                 }
             }
         }
@@ -64,7 +74,13 @@ open class SwitchNode: ASDisplayNode {
         super.init()
         
         self.setViewBlock({
-            return SwitchNodeView()
+            if #available(iOS 26.0, *) {
+                return SwitchNodeView()
+            } else if #available(iOS 17.0, *) {
+                return LiquidSwitchWrapper()
+            } else {
+                return SwitchNodeView()
+            }
         })
     }
     
@@ -73,24 +89,47 @@ open class SwitchNode: ASDisplayNode {
         
         self.view.isAccessibilityElement = false
         
-        (self.view as! UISwitch).backgroundColor = self.backgroundColor
-        (self.view as! UISwitch).tintColor = self.frameColor
-        (self.view as! UISwitch).onTintColor = self.contentColor
-        
-        (self.view as! UISwitch).setOn(self._isOn, animated: false)
-        
-        (self.view as! UISwitch).addTarget(self, action: #selector(switchValueChanged(_:)), for: .valueChanged)
+        if let switchView = self.view as? UISwitch {
+            switchView.backgroundColor = self.backgroundColor
+            switchView.tintColor = self.frameColor
+            switchView.onTintColor = self.contentColor
+            
+            switchView.setOn(self._isOn, animated: false)
+            
+            switchView.addTarget(self, action: #selector(switchValueChanged(_:)), for: .valueChanged)
+        } else if #available(iOS 17.0, *), let wrapper = self.view as? LiquidSwitchWrapper {
+            wrapper.backgroundColor = .clear
+            wrapper.model.isOn = self._isOn
+            wrapper.model.frameColor = Color(self.frameColor)
+            wrapper.model.contentColor = Color(self.contentColor)
+            wrapper.model.handleColor = Color(self.handleColor)
+            
+            wrapper.onValueChanged = { [weak self] isOn in
+                self?._isOn = isOn
+                self?.valueUpdated?(isOn)
+            }
+        }
     }
     
     public func setOn(_ value: Bool, animated: Bool) {
         self._isOn = value
         if self.isNodeLoaded {
-            (self.view as! UISwitch).setOn(value, animated: animated)
+            if let switchView = self.view as? UISwitch {
+                switchView.setOn(value, animated: animated)
+            } else if #available(iOS 17.0, *), let wrapper = self.view as? LiquidSwitchWrapper {
+                if animated {
+                    withAnimation { wrapper.model.isOn = value }
+                } else {
+                    wrapper.model.isOn = value
+                }
+            }
         }
     }
     
     override open func calculateSizeThatFits(_ constrainedSize: CGSize) -> CGSize {
         if #available(iOS 26.0, *) {
+            return CGSize(width: 63.0, height: 28.0)
+        } else if #available(iOS 17.0, *) {
             return CGSize(width: 63.0, height: 28.0)
         } else {
             return CGSize(width: 51.0, height: 31.0)

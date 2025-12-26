@@ -6,6 +6,7 @@ import TelegramPresentationData
 import ComponentFlow
 import ComponentDisplayAdapters
 import TabBarComponent
+import SwiftUI
 
 private extension ToolbarTheme {
     convenience init(theme: PresentationTheme) {
@@ -14,6 +15,9 @@ private extension ToolbarTheme {
 }
 
 final class TabBarControllerNode: ASDisplayNode {
+    private var swiftUIHostingView: UIView?
+    private var lensModel: AnyObject?
+    
     private struct Params: Equatable {
         let layout: ContainerViewLayout
         let toolbar: Toolbar?
@@ -86,6 +90,9 @@ final class TabBarControllerNode: ASDisplayNode {
             if let tabBarView = self.tabBarView.view {
                 self.view.bringSubviewToFront(tabBarView)
             }
+            if let liquidView = self.swiftUIHostingView {
+                self.view.bringSubviewToFront(liquidView)
+            }
         }
         
         return { [weak self, weak previousNode] in
@@ -124,9 +131,6 @@ final class TabBarControllerNode: ASDisplayNode {
         }
         
         self.backgroundColor = theme.list.plainBackgroundColor
-        
-        //self.addSubnode(self.tabBarNode)
-        //self.addSubnode(self.disabledOverlayNode)
     }
     
     override func didLoad() {
@@ -196,6 +200,7 @@ final class TabBarControllerNode: ASDisplayNode {
         if self.selectedIndex < self.tabBarItems.count {
             selectedId = ObjectIdentifier(self.tabBarItems[self.selectedIndex].item)
         }
+        
         var tabBarTransition = ComponentTransition(transition)
         if self.isChangingSelectedIndex {
             self.isChangingSelectedIndex = false
@@ -204,6 +209,7 @@ final class TabBarControllerNode: ASDisplayNode {
         if self.tabBarView.view == nil {
             tabBarTransition = .immediate
         }
+        
         let tabBarSize = self.tabBarView.update(
             transition: tabBarTransition,
             component: AnyComponent(TabBarComponent(
@@ -236,14 +242,80 @@ final class TabBarControllerNode: ASDisplayNode {
             environment: {},
             containerSize: CGSize(width: params.layout.size.width - sideInset * 2.0, height: 100.0)
         )
+        
         let tabBarFrame = CGRect(origin: CGPoint(x: floor((params.layout.size.width - tabBarSize.width) * 0.5), y: params.layout.size.height - (self.tabBarHidden ? 0.0 : (tabBarSize.height + bottomInset))), size: tabBarSize)
         
-        if let tabBarComponentView = self.tabBarView.view {
-            if tabBarComponentView.superview == nil {
-                self.view.addSubview(tabBarComponentView)
+        var shouldRenderLiquid = false
+        if #available(iOS 17.0, *) {
+            shouldRenderLiquid = true
+        }
+        if #available(iOS 26.0, *) {
+            shouldRenderLiquid = false
+        }
+        
+        if shouldRenderLiquid, #available(iOS 17.0, *) {
+            self.tabBarView.view?.isHidden = true
+            
+            let liquidItems = self.tabBarItems.map { item in
+                let itemId = AnyHashable(ObjectIdentifier(item.item))
+                let componentItem = TabBarComponent.Item(
+                    item: item.item,
+                    action: { [weak self] _ in
+                         guard let self else { return }
+                         if let index = self.tabBarItems.firstIndex(where: { AnyHashable(ObjectIdentifier($0.item)) == itemId }) {
+                             self.itemSelected(index, false, [])
+                         }
+                    },
+                    contextAction: nil
+                )
+                return LiquidTabItem(componentItem: componentItem)
             }
-            transition.updateFrame(view: tabBarComponentView, frame: tabBarFrame)
-            transition.updateAlpha(layer: tabBarComponentView.layer, alpha: params.toolbar == nil ? 1.0 : 0.0)
+            
+            if let model = self.lensModel as? LensTabBarModel {
+                model.theme = self.theme
+                model.items = liquidItems
+                model.selectedId = selectedId
+            } else {
+                let model = LensTabBarModel(
+                    theme: self.theme,
+                    items: liquidItems,
+                    selectedId: selectedId
+                )
+                self.lensModel = model
+                
+                let swiftUIView = LensTabBarView(
+                    model: model,
+                    tapAction: { [weak self] id in
+                        if let index = self?.tabBarItems.firstIndex(where: { AnyHashable(ObjectIdentifier($0.item)) == id }) {
+                            self?.itemSelected(index, false, [])
+                        }
+                    }
+                )
+                
+                let hostingController = UIHostingController(rootView: swiftUIView)
+                hostingController.view.backgroundColor = .clear
+                self.swiftUIHostingView = hostingController.view
+                self.view.addSubview(self.swiftUIHostingView!)
+            }
+            
+            if let hostingView = self.swiftUIHostingView {
+                hostingView.isHidden = false
+                hostingView.clipsToBounds = false
+                transition.updateFrame(view: hostingView, frame: tabBarFrame)
+                transition.updateAlpha(layer: hostingView.layer, alpha: params.toolbar == nil ? 1.0 : 0.0)
+            }
+            
+        } else {
+            self.swiftUIHostingView?.isHidden = true
+            
+            if let tabBarComponentView = self.tabBarView.view {
+                if tabBarComponentView.superview == nil {
+                    self.view.addSubview(tabBarComponentView)
+                }
+                tabBarComponentView.isHidden = false
+                transition.updateFrame(view: tabBarComponentView, frame: tabBarFrame)
+                transition.updateAlpha(layer: tabBarComponentView.layer, alpha: params.toolbar == nil ? 1.0 : 0.0)
+            }
         }
         
         transition.updateFrame(node: self.disabledOverlayNode, frame: tabBarFrame)
